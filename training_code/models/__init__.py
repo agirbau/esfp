@@ -8,7 +8,7 @@ def get_model(args):
     if not hasattr(args, "channel"):
         channel = 32
     else:
-       channel =  args.channels
+       channel =  args.channel
     if args.model=="unet":
         model = UNet(channel, 3, dim=args.dim, norm=args.norm)
     return model

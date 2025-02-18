@@ -33,7 +33,7 @@ parser.add_argument("--training_mode", type=str, default="all",
                         help='quick training mode switch, fast or all, or validation.\
                         this argument overwrites the following arguments')
 
-parser.add_argument("--exp_name", type=str, default="none", \
+parser.add_argument("--exp_name", type=str, default="original", \
                         help='Name of this experiments')
 
 # Model parameters
@@ -49,18 +49,18 @@ parser.add_argument("--norm", type=str, default='in',
 
 
 # Dataset parameters
-parser.add_argument('--dataset', default='mitsuba', type=str, 
+parser.add_argument('--dataset', default='realevents', type=str, 
                     choices= ["mitsuba", "realevents", "realimages", "realim_motion", "realev_motion"], 
                     help='path to dataset') 
 
 # Data Preprocessing parameters
-parser.add_argument("--batch_size", type=int, default=1, 	\
+parser.add_argument("--batch_size", type=int, default=4, 	\
                 help="Training batch size")
 
 parser.add_argument("--debug", action='store_true',\
                     help="use debug mode")
 
-parser.add_argument('--netinput', default='events_event_intensities', type=str, 
+parser.add_argument('--netinput', default='events_8_bins_cvgri', type=str, 
                 choices= [  
                             "fourraw",
                             "fourraw_pol",
@@ -90,7 +90,7 @@ parser.add_argument("--loss", type=str, default="mae",
 parser.add_argument('--pretrained', default=None, type=str, help='path to pretrained network') 
 
 # Dirs
-parser.add_argument('--dataroot', default='/tmp/cluster/mitsuba_dataset/event_data/new_dataset/', type=str, help='path to dataset') 
+parser.add_argument('--dataroot', default='/home/user/datasets/ESFP-Real/realworld_dataset_clean', type=str, help='path to dataset') 
 
 parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
@@ -482,8 +482,10 @@ def main_worker(gpu, ngpus_per_node, args):
                 trainsave(loader_train, epoch, model, args)
                 _, mean_mae = validate(loader_val, model, args, epoch, writer)
                 if mean_mae < best_mae:
+                    save_path = os.path.join(args.output_dir, 'ckpt_best_val.pth')
+                    print(f"MAE variation: {best_mae}->{mean_mae}. Best model saved at {save_path}")
                     best_mae = mean_mae
-                    save_model_checkpoint(model, epoch, save_path=os.path.join(args.output_dir, 'ckpt_best_val.pth'))    
+                    save_model_checkpoint(model, epoch, save_path=save_path)    
     elif args.training_mode=='test' :               
         loader_val = DataLoader(sfp_test_dataset, 
                                 batch_size =1, 
@@ -497,3 +499,5 @@ def main_worker(gpu, ngpus_per_node, args):
  
 if __name__ == "__main__":
     main()    
+
+# %%
