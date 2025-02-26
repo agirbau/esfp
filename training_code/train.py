@@ -92,7 +92,7 @@ parser.add_argument('--pretrained', default=None, type=str, help='path to pretra
 # Dirs
 parser.add_argument('--dataroot', default='/home/user/datasets/ESFP-Real/realworld_dataset_clean', type=str, help='path to dataset') 
 
-parser.add_argument('--seed', default=None, type=int,
+parser.add_argument('--seed', default=123, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=0, type=int,
                     help='GPU id to use.')

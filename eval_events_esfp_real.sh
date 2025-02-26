@@ -1,0 +1,3 @@
+python3 evaluate_sfp.py -path_dir /home/user/datasets/ESFP-Real/realworld_dataset_clean/test -exp_name "original"
+# -path_dir /home/user/datasets/ESFP-Real/realworld_dataset_clean/sampling/iccv25/events_poisson_0.1-1/test -exp_name "poi_01" -result_dir /home/user/work/projects/research/event_sampling_dev/logs/esfp
+# -path_dir /home/user/datasets/ESFP-Real/realworld_dataset_clean/sampling/iccv25/events_evDownNavi_0.1-1/test -exp_name "evd_01" -result_dir /home/user/work/projects/research/event_sampling_dev/logs/esfp

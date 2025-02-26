@@ -13,6 +13,7 @@ WORKDIR /home/user/app
 
 RUN pip install opencv-python-headless
 RUN pip install --no-cache-dir -r /home/user/app/training_code/requirements.txt
+RUN pip install hdf5plugin
 
 # Set the default command to run Jupyter Notebook from the app folder
 CMD ["/bin/bash"]
