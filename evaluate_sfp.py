@@ -2,11 +2,17 @@ import numpy as np
 import argparse
 import glob
 import os
+import hdf5plugin
 import h5py
 import math
 import cv2
+import tqdm
 
 from polarization_utils import ShapeFromPolarizationInfor, get_concat_normals
+from eval_utils import render_normal_map, save_normal_map
+from pathlib import Path
+
+import multiprocessing as mp
 
 def read_events(filename, has_gt):
     h5f = h5py.File(str(filename), 'r')
@@ -20,7 +26,7 @@ def read_events(filename, has_gt):
         gt_normal = 0
     return x,y,t,p, gt_normal
 
-def evaluate_normals(pred, gt):
+def evaluate_normals_old(pred, gt):
     # valid_mask = np.ones(np.mean(pred, axis=2).shape)
     pred[~np.isfinite(pred)] = 0
     valid_mask = np.where((np.mean(gt, axis=2)+np.mean(pred, axis=2)) != 0 , 1, 0)
@@ -54,6 +60,50 @@ def evaluate_normals(pred, gt):
             ae_30,
             mae_map*valid_mask, 
             valid_mask)
+
+def evaluate_normals(pred, gt):
+    # Handle NaN and Inf values in prediction
+    pred[~np.isfinite(pred)] = 0
+
+    # Compute valid mask based on vector magnitudes
+    valid_mask = (np.linalg.norm(gt, axis=2) > 0) & (np.linalg.norm(pred, axis=2) > 0)
+    valid_mask &= np.isfinite(pred).all(axis=2)
+
+    # Normalize normal vectors
+    gt_norm = gt / (np.linalg.norm(gt, axis=2, keepdims=True) + 1e-8)  # Avoid division by zero
+    pred_norm = pred / (np.linalg.norm(pred, axis=2, keepdims=True) + 1e-8)
+
+    # Compute angular error
+    dot_product = np.sum(gt_norm * pred_norm, axis=2).clip(-1, 1)
+    mae_map = np.arccos(dot_product) * (180. / np.pi)
+
+    # Mask invalid regions
+    mae_map_valid = mae_map[valid_mask]
+    mae_map *= valid_mask
+
+    # Create heatmap visualization
+    mae_map_gray = np.uint8((mae_map * 5 * 255.0 / 180).clip(0, 255))
+    diff_color = cv2.applyColorMap(mae_map_gray, cv2.COLORMAP_JET)
+
+    # Compute AE percentages correctly
+    if mae_map_valid.shape[0] > 0:
+        ae_11 = np.mean(mae_map_valid < 11.25)
+        ae_22 = np.mean(mae_map_valid < 22.5)
+        ae_30 = np.mean(mae_map_valid < 30)
+    else:
+        ae_11 = 0
+        ae_22 = 0
+        ae_30 = 0
+
+    return (
+        np.mean(mae_map_valid),  # Mean Angular Error
+        diff_color,  # Colored visualization
+        np.median(mae_map_valid),  # Median Angular Error
+        np.sqrt(np.mean(mae_map_valid ** 2)),  # Root Mean Square Error
+        ae_11, ae_22, ae_30,  # Angular error percentages
+        mae_map,  # Angular error map
+        valid_mask  # Validity mask
+    )
 
 def get_aop_dop_from_images(images: np.ndarray, num_images=4):
     if num_images==4:
@@ -206,7 +256,6 @@ def get_event_intensity(event_intensities, phase_angle):
     i_s = np.zeros((12,))
     i=0
     for t in thetas:
-        # print(event_intensities[np.argmin(abs(phase_angle- thetas))])
         i_s[i] = event_intensities[np.argmin(abs(phase_angle- t))]
         i+=1
     return i_s
@@ -265,7 +314,13 @@ def processing_single_folder(object_dir, is_mituba=False, is_real=False, baselin
         normals_specular1 = normals[0]
         normals_specular2 = normals[1]
 
-
+        # Save normals for debugging
+        # [specular1_metrics, specular2_metrics, normals_specular2, normals_specular1, gt_normal, fr]
+        parent_path = Path(object_dir)
+        save_normal_map(normals_specular2, str(parent_path) + "/normals_specular2.png")
+        save_normal_map(normals_specular1, str(parent_path) + "/normals_specular1.png")
+        save_normal_map(gt_normal, str(parent_path) + "/normals_gt.png")
+        #
 
         normals_specular2[np.sum(gt_normal,axis=2)==0]=0
         normals_specular1[np.sum(gt_normal,axis=2)==0]=0
@@ -293,7 +348,13 @@ def processing_single_folder(object_dir, is_mituba=False, is_real=False, baselin
         specular_metrics = evaluate_normals(normals, gt_normal)
         return [diffuse_metrics, specular_metrics, normals, normals, gt_normal, fr]
     
-   
+
+def mp_processing_single_folder(vars):
+    f_idx, object_dir, is_mitsuba, is_real, baseline = vars
+
+    msg = processing_single_folder(object_dir, is_mitsuba, is_real, baseline)
+
+    return msg
 
 
 def main():
@@ -319,7 +380,7 @@ def main():
         print("Check the arguments")
         exit()
 
-    objects_dir = [f.path for f in os.scandir(args.path_dir) if f.is_dir()]
+    objects_dir = sorted([f.path for f in os.scandir(args.path_dir) if f.is_dir()])
     result_txt = os.path.join(args.result_dir, args.exp_name+'.txt')
     exp_result_dir = os.path.join(args.result_dir, args.exp_name+'/')
     if not os.path.exists(exp_result_dir):
@@ -327,7 +388,7 @@ def main():
     exp_gt_dir = os.path.join(args.result_dir, 'gt/')
     if not os.path.exists(exp_gt_dir):
         os.makedirs(exp_gt_dir)
-    f = open(result_txt, "w")
+    
     metrics = ["mean_ae", "median_ae", "rmse_ae", "ae_11", "ae_22", "ae_30", "fillrate"]
     metrics_dict = {}
     for metric in metrics:
@@ -340,26 +401,61 @@ def main():
         error_sum = np.zeros((720, 1280))
         mask_sum = np.zeros((720, 1280))
     
-    for f_idx, object_dir in enumerate(objects_dir):
-        msg = processing_single_folder(object_dir, is_mitsuba, is_real, args.baseline)
-        specular1_metrics = msg[0]
-        # specular2_metrics = msg[1]
-        # normals_diffuse = msg[2]
-        # normals_specular = msg[3]
-        gt_normal = msg[4]
-        fillrate = msg[5]
-        (mean_ae, diff_color, median_ae, rmse_ae, ae_11, ae_22, ae_30, mae_map, valid_mask) = specular1_metrics
-        error_sum += mae_map 
-        mask_sum += valid_mask
-        for idx, metric in enumerate([mean_ae, median_ae, rmse_ae, ae_11, ae_22, ae_30, fillrate]):
-            f.writelines("{} {} {}\n".format(objects_dir[f_idx], metrics[idx], metric))
-            metrics_dict[metrics[idx]].append(metric)
-        f_idx+=1
-    print("\n\n")
-    for metric in metrics:
-        print("{} {}: {}\n".format("average", metric, np.mean(metrics_dict[metric])))
-        f.writelines("{} {}: {:.3f}\n".format("average", metric, np.mean(metrics_dict[metric])))
-    f.close()
+    #f = open(result_txt, "w")
+
+    with open(result_txt, "w") as f:
+        vars_mp = [(f_idx, object_dir, is_mitsuba, is_real, args.baseline) for f_idx, object_dir in enumerate(objects_dir)]
+        with mp.Pool(16) as pool:
+            results = list(tqdm.tqdm(pool.imap(mp_processing_single_folder, vars_mp), total=len(vars_mp)))
+
+        for msg, v in zip(results, vars_mp):
+            f_idx = v[0]
+            specular1_metrics = msg[0]
+            specular2_metrics = msg[1]
+            normals_diffuse = msg[2]
+            normals_specular = msg[3]
+            gt_normal = msg[4]
+            fillrate = msg[5]
+            (mean_ae, diff_color, median_ae, rmse_ae, ae_11, ae_22, ae_30, mae_map, valid_mask) = specular1_metrics
+            print(f"{Path(objects_dir[f_idx]).name}: {mean_ae}")
+            error_sum += mae_map 
+            mask_sum += valid_mask
+            for idx, metric in enumerate([mean_ae, median_ae, rmse_ae, ae_11, ae_22, ae_30, fillrate]):
+                f.writelines("{} {} {}\n".format(objects_dir[f_idx], metrics[idx], metric))
+                metrics_dict[metrics[idx]].append(metric)
+            f_idx+=1
+        print("\n\n")
+        for metric in metrics:
+            print("{} {}: {}\n".format("average", metric, np.mean(metrics_dict[metric])))
+            f.writelines("{} {}: {:.3f}\n".format("average", metric, np.mean(metrics_dict[metric])))
+        f.close()
+
+
+    '''
+     with open(result_txt, "w") as f:
+        #for f_idx, object_dir in tqdm.tqdm(enumerate(objects_dir)):
+        for f_idx, object_dir in enumerate(objects_dir):
+            msg = processing_single_folder(object_dir, is_mitsuba, is_real, args.baseline)
+            specular1_metrics = msg[0]
+            # specular2_metrics = msg[1]
+            # normals_diffuse = msg[2]
+            # normals_specular = msg[3]
+            gt_normal = msg[4]
+            fillrate = msg[5]
+            (mean_ae, diff_color, median_ae, rmse_ae, ae_11, ae_22, ae_30, mae_map, valid_mask) = specular1_metrics
+            print(f"{Path(object_dir).name}: {mean_ae}")
+            error_sum += mae_map 
+            mask_sum += valid_mask
+            for idx, metric in enumerate([mean_ae, median_ae, rmse_ae, ae_11, ae_22, ae_30, fillrate]):
+                f.writelines("{} {} {}\n".format(objects_dir[f_idx], metrics[idx], metric))
+                metrics_dict[metrics[idx]].append(metric)
+            f_idx+=1
+        print("\n\n")
+        for metric in metrics:
+            print("{} {}: {}\n".format("average", metric, np.mean(metrics_dict[metric])))
+            f.writelines("{} {}: {:.3f}\n".format("average", metric, np.mean(metrics_dict[metric])))
+        f.close()
+    '''
 
 if __name__ == '__main__':
     main()
