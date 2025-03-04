@@ -77,6 +77,10 @@ def evaluate_normals(pred, gt):
     dot_product = np.sum(gt_norm * pred_norm, axis=2).clip(-1, 1)
     mae_map = np.arccos(dot_product) * (180. / np.pi)
 
+    if valid_mask.max() == False:
+        print("No valid pixels")
+        return (np.arccos(0) * (180. / np.pi), 0, 0, 0, 0, 0, 0, 0, 0)
+
     # Mask invalid regions
     mae_map_valid = mae_map[valid_mask]
     mae_map *= valid_mask
@@ -213,7 +217,7 @@ def get_aop_dop_from_events(x: np.ndarray, y: np.ndarray, p: np.ndarray, t: np.n
                         polarity = py[xy==plot_x]
                         phi_max = np.max(phi_img)
                         if len(polarity)>2:
-                            phi_events = np.array([phi_max*(t-np.min(timestamp))/(np.max(timestamp)-np.min(timestamp)) for t in timestamp])
+                            phi_events = np.array([phi_max*(t-np.min(timestamp))/(np.max(timestamp)-np.min(timestamp)+eps) for t in timestamp])
                             norm_event_intensities = render_event_rate(phi_events,  polarity, c, 0, 0)
                             event_intensities[plot_y, plot_x, :] = get_event_intensity(norm_event_intensities, phi_events)
                             count+=1
@@ -256,7 +260,7 @@ def get_event_intensity(event_intensities, phase_angle):
     i_s = np.zeros((12,))
     i=0
     for t in thetas:
-        i_s[i] = event_intensities[np.argmin(abs(phase_angle- t))]
+        i_s[i] = event_intensities[np.argmin(abs(phase_angle - t))]
         i+=1
     return i_s
 
@@ -458,4 +462,5 @@ def main():
     '''
 
 if __name__ == '__main__':
+    eps = 1e-8
     main()
