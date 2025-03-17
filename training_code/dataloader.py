@@ -5,6 +5,7 @@ import random
 from time import time
 
 import cv2
+import hdf5plugin
 import h5py
 import numpy as np
 import torch.nn.functional as F
@@ -342,17 +343,17 @@ class RealDataset(Dataset):
         frames = np.zeros((H, W, C))
         contrast_threshold = 0.27
         if self.use_events:
-            if os.path.isfile(str(object_folder+'/vgrid.npy')):
-                voxel_grid = np.load(str(object_folder+'/vgrid.npy')) # [H, W, C]
-            else:
-                h5f = h5py.File(str(object_folder+'/events.h5'), 'r')
-                events = dict()
-                events['x'] = h5f['x']
-                events['y'] = h5f['y']
-                events['t'] = h5f['t']
-                events['p'] = h5f['p']
-                voxel_grid = self.events_to_voxel_grid(events, bins=8)
-                np.save(str(object_folder+'/vgrid.npy'), voxel_grid)
+            #if os.path.isfile(str(object_folder+'/vgrid.npy')):
+            #    voxel_grid = np.load(str(object_folder+'/vgrid.npy')) # [H, W, C]
+            #else:
+            h5f = h5py.File(str(object_folder+'/events.h5'), 'r')
+            events = dict()
+            events['x'] = h5f['x']
+            events['y'] = h5f['y']
+            events['t'] = h5f['t']
+            events['p'] = h5f['p']
+            voxel_grid = self.events_to_voxel_grid(events, bins=8)
+            #np.save(str(object_folder+'/vgrid.npy'), voxel_grid)
             frame = cv2.imread(os.path.join(object_folder, 'Ev_{:04d}.png'.format(0)), 0).astype(np.float32)/255
             frames = np.cumsum(voxel_grid*contrast_threshold,axis=2)
             frames += np.expand_dims(frame,axis=-1)

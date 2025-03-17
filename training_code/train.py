@@ -6,6 +6,7 @@ os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 import random
 import time
 import warnings
+from pathlib import Path
 
 import cv2
 import models as Models
@@ -24,7 +25,7 @@ from utils.train_util import (adjust_learning_rate, get_net_input_channel,
 from utils.visualizer import (markdown_visualizer_img, save_image, tensor2im,
                               tensor2norm)
 
-from dataloader import create_dataloader
+from dataloader import create_dataloader, RealDataset
 
 parser = argparse.ArgumentParser(description="Train the normal estimation network")
 # Convenient Training mode
@@ -70,7 +71,7 @@ parser.add_argument('--netinput', default='events_8_bins_cvgri', type=str,
                 help='feature feed into the netowrk') 
 
 # Training parameters
-parser.add_argument("--epochs", "--e", type=int, default=1000, \
+parser.add_argument("--epochs", "--e", type=int, default=200, \
                     help="Number of total training epochs")
 
 parser.add_argument("--cos", action='store_true',\
@@ -98,6 +99,8 @@ parser.add_argument('--gpu', default=0, type=int,
                     help='GPU id to use.')
 parser.add_argument('-j', '--workers', default=2, type=int, metavar='N',
                     help='number of data loading workers (default: 8)')
+parser.add_argument('--logs_oled', default='logs_oled', type=str, metavar='N',
+                    help='path to save logs')
 
 
 
@@ -169,6 +172,12 @@ def validate(loader_val, model, args, epoch=None, writer=None):
     mae_list = []
 
     result_txt = os.path.join(save_image_dir, 'results.txt')
+    result_txt_oled = args.logs_oled
+    if os.path.exists(result_txt):
+        os.remove(result_txt)
+    if os.path.exists(result_txt_oled):
+        os.remove(result_txt_oled)
+
     metrics = ["mean_ae", "med_ae", "rmse_ae", "ae_11", "ae_22", "ae_30", "fillrate"]
     metrics_dict = {}
     
@@ -231,9 +240,10 @@ def validate(loader_val, model, args, epoch=None, writer=None):
                 ae_11= ae11[img_idx]
                 ae_22= ae22[img_idx]
                 ae_30= ae30[img_idx]
-                with open(result_txt, "a") as f:
+                with open(result_txt, "a") as f, open(result_txt_oled, "a") as f_oled:
                     for idx, metric in enumerate([mean_ae, 0, 0, ae_11, ae_22, ae_30, 0]):
                         f.writelines("{} {} {}\n".format(f_idx[img_idx], metrics[idx], metric))
+                        f_oled.writelines("{} {} {}\n".format(f_idx[img_idx], metrics[idx], metric))
                         metrics_dict[metrics[idx]].append(metric)
                 f.close()
 
@@ -244,11 +254,13 @@ def validate(loader_val, model, args, epoch=None, writer=None):
         print(' * MAE {mae_score.avg:.3f} ae11_metric {ae11_metric.avg:.3f}, ae22_metric {ae22_metric.avg:.3f}, ae30_metric {ae30_metric.avg:.3f}'
               .format(mae_score=mae_score, ae11_metric=ae11_metric, ae22_metric=ae22_metric, ae30_metric=ae30_metric))
         
-    with open(result_txt, "a") as f:
+    with open(result_txt, "a") as f, open(result_txt_oled, "a") as f_oled:
         for metric in metrics:
             print("{} {}: {}\n".format("average", metric, np.mean(metrics_dict[metric])))
             f.writelines("{} {}: {:.3f}\n".format("average", metric, np.mean(metrics_dict[metric])))
+            f_oled.writelines("{} {}: {:.3f}\n".format("average", metric, np.mean(metrics_dict[metric])))
     f.close()
+    f_oled.close()
     if writer is not None:
         print("writer test loss: ", losses.avg, epoch)
         writer.add_scalar('test loss', losses.avg, epoch)
@@ -266,10 +278,17 @@ def trainsave(loader_train, epoch, model, args):
     model.eval()
     mae_list = []
     result_txt = os.path.join(save_image_dir, 'results.txt')
+    result_txt_oled = args.logs_oled
     metrics = ["mean_ae", "ae_11", "ae_22", "ae_30"]
     metrics_dict = {}
     for metric in metrics:
         metrics_dict[metric] = []
+
+    # Delete the previous results
+    if os.path.exists(result_txt):
+        os.remove(result_txt)
+    if os.path.exists(result_txt_oled):
+        os.remove(result_txt_oled)
 
     with torch.no_grad():
         for i, data_sample in enumerate(loader_train, 0):
@@ -315,9 +334,10 @@ def trainsave(loader_train, epoch, model, args):
                 ae_11= ae11[img_idx]
                 ae_22= ae22[img_idx]
                 ae_30= ae30[img_idx]
-                with open(result_txt, "a") as f:
+                with open(result_txt, "a") as f, open(result_txt_oled, "a") as f_oled:
                     for idx, metric in enumerate([mean_ae, ae_11, ae_22, ae_30]):
                         f.writelines("{} {} {}\n".format(f_idx[img_idx], metrics[idx], metric))
+                        f_oled.writelines("{} {} {}\n".format(f_idx[img_idx], metrics[idx], metric))
                         metrics_dict[metrics[idx]].append(metric)
                 f.close()
             markdown_visualizer_img(save_image_dir, i * b + img_idx, mae_list)
@@ -325,11 +345,13 @@ def trainsave(loader_train, epoch, model, args):
                 .format(mae_score=mae_score, ae11_metric=ae11_metric, ae22_metric=ae22_metric, ae30_metric=ae30_metric))
             if i==5:
                 break
-        with open(result_txt, "a") as f:
+        with open(result_txt, "a") as f, open(result_txt_oled, "a") as f_oled:
                 for metric in metrics:
                     print("{} {}: {}\n".format("average", metric, np.mean(metrics_dict[metric])))
                     f.writelines("{} {}: {:.3f}\n".format("average", metric, np.mean(metrics_dict[metric])))
+                    f_oled.writelines("{} {}: {:.3f}\n".format("average", metric, np.mean(metrics_dict[metric])))
         f.close()
+        f_oled.close()
         return
 
 def train_one_epoch(loader_train, epoch, model, optimizer, writer, args):
@@ -397,6 +419,7 @@ def main_worker(gpu, ngpus_per_node, args):
     args.output_dir = "./results/"+ args.exp_name 
     args.output_dir_train = "./results/"+ args.exp_name +'/train'
     os.makedirs(args.log_dir, exist_ok=True)
+    os.makedirs(Path(args.logs_oled).parent, exist_ok=True)
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(args.output_dir_train, exist_ok=True)
     os.makedirs(os.path.join(args.output_dir, 'ckpt_epochs'), exist_ok=True)
@@ -434,7 +457,8 @@ def main_worker(gpu, ngpus_per_node, args):
     print(model)
     print("args.model", args.model)
 
-    
+    if args.training_mode=='test' and args.pretrained is None:
+        args.pretrained = args.output_dir
 
     if not torch.cuda.is_available():
         args.gpu = None
@@ -451,8 +475,11 @@ def main_worker(gpu, ngpus_per_node, args):
     print("num_params", num_params)
     print("args.training_mode == %s"%args.training_mode)
    
-    
-    sfp_train_dataset, sfp_test_dataset = create_dataloader(args)
+    if args.training_mode=='all':
+        sfp_train_dataset, sfp_test_dataset = create_dataloader(args)
+    else:
+        args.pretrained = args.output_dir
+        sfp_test_dataset = RealDataset(args.dataroot, train=0, use_events=True)
 
     train_sampler = None
     if args.training_mode=='all':
